@@ -200,11 +200,48 @@ local function ChildNames(Parent)
 	return table.concat(Names, ", ")
 end
 
--- The client library has moved between game updates, so resolve it by looking
--- for the EggCmds module rather than trusting one hard-coded path. WaitForChild
--- returns nil on timeout, and indexing that nil is what killed the previous
--- build before it could report anything.
-local LIBRARY_NAMES = { "Library", "Libraries", "Shared", "Modules" }
+local function DumpTree(Root, MaxDepth, MaxEntries)
+	local Count = 0
+	local function Walk(Node, Depth)
+		if Depth > MaxDepth or Count >= MaxEntries then
+			return
+		end
+		for _, Child in ipairs(Node:GetChildren()) do
+			if Count >= MaxEntries then
+				return
+			end
+			Count += 1
+			print(string.rep("  ", Depth) .. Child.ClassName .. "  " .. Child.Name)
+			Walk(Child, Depth + 1)
+		end
+	end
+	Walk(Root, 1)
+	if Count >= MaxEntries then
+		print("  ... truncated at " .. tostring(MaxEntries) .. " entries")
+	end
+	return Count
+end
+
+-- The client library moved between game updates, so resolve it instead of
+-- trusting one hard-coded path. WaitForChild returns nil on timeout, and
+-- indexing that nil is what killed the previous build before it could report.
+local LIBRARY_NAMES = { "Library", "Libraries", "Shared", "SharedModules", "Modules", "Packages" }
+
+-- The egg module is not guaranteed to keep its name either, so a container also
+-- qualifies when it holds any of the other modules this script requires.
+local KNOWN_MODULES = {
+	"EggCmds", "PlotCmds", "Network", "ToolGameplayGuard", "Save", "BaseUpgradeClient",
+	"AssetCmds", "SpeedPowerProjection", "GuardAreaLookupUtil", "TreadmillUtil", "Constants",
+}
+
+local function IsKnownModule(Name)
+	for _, Known in ipairs(KNOWN_MODULES) do
+		if Name == Known then
+			return true
+		end
+	end
+	return false
+end
 
 local function FindLibraryDirect()
 	for _, Name in ipairs(LIBRARY_NAMES) do
@@ -212,6 +249,20 @@ local function FindLibraryDirect()
 		local ClientFolder = Container and Container:FindFirstChild("Client")
 		if ClientFolder and ClientFolder:FindFirstChild("EggCmds") then
 			return Container, Name
+		end
+	end
+	return nil, nil
+end
+
+-- Derive the library from any known module: its parent is the group folder
+-- (Client / Util / Globals) and that folder's parent is the library.
+local function FindLibraryByModules()
+	for _, Desc in ipairs(ReplicatedStorage:GetDescendants()) do
+		if Desc:IsA("ModuleScript") and IsKnownModule(Desc.Name) then
+			local Container = Desc.Parent and Desc.Parent.Parent
+			if Container then
+				return Container, Container:GetFullName() .. " (via " .. Desc.Name .. ")"
+			end
 		end
 	end
 	return nil, nil
@@ -229,30 +280,42 @@ local function FindLibraryDeep()
 	return nil, nil
 end
 
-local function ResolveLibrary()
+local function FindLibrary()
 	local Found, How = FindLibraryDirect()
-	if not Found then
-		Found, How = FindLibraryDeep()
+	if Found then
+		return Found, How
 	end
+	Found, How = FindLibraryByModules()
+	if Found then
+		return Found, How
+	end
+	Found, How = FindLibraryDeep()
+	if Found then
+		return Found, How
+	end
+	return nil, nil
+end
+
+local function ResolveLibrary()
+	local Found, How = FindLibrary()
 	if Found then
 		return Found, How
 	end
 
-	-- Content may still be replicating; poll before giving up.
+	-- Content may still be replicating; poll before giving up. The descendant
+	-- walks are the expensive part, so they run on every fourth tick only.
 	local Deadline = os.clock() + 20
-	local LastDeep = os.clock()
+	local Ticks = 0
 	while os.clock() < Deadline do
 		task.wait(0.5)
-		Found, How = FindLibraryDirect()
+		Ticks += 1
+		if Ticks % 4 == 0 then
+			Found, How = FindLibrary()
+		else
+			Found, How = FindLibraryDirect()
+		end
 		if Found then
 			return Found, How
-		end
-		if os.clock() - LastDeep >= 5 then
-			LastDeep = os.clock()
-			Found, How = FindLibraryDeep()
-			if Found then
-				return Found, How
-			end
 		end
 	end
 	return nil, nil
@@ -281,11 +344,12 @@ local Lib, LibPath = ResolveLibrary()
 if not Lib then
 	warn("[Voidcxz Hub] Could not find the game's client library - aborting.")
 	print("[Voidcxz Hub] PlaceId: " .. tostring(game.PlaceId) .. " (expected " .. tostring(PLACE_ID) .. ")")
-	print("[Voidcxz Hub] ReplicatedStorage children:")
-	for _, Child in ipairs(ReplicatedStorage:GetChildren()) do
-		print("    " .. Child.ClassName .. "  " .. Child.Name)
-	end
-	print("[Voidcxz Hub] Join Steal An Egg and re-run, or send the list above.")
+	print("[Voidcxz Hub] looked for a container named: " .. table.concat(LIBRARY_NAMES, ", "))
+	print("[Voidcxz Hub] ...or any folder holding: " .. table.concat(KNOWN_MODULES, ", "))
+	local Descendants = ReplicatedStorage:GetDescendants()
+	print("[Voidcxz Hub] ReplicatedStorage holds " .. tostring(#Descendants) .. " descendants. Tree:")
+	DumpTree(ReplicatedStorage, 3, 250)
+	print("[Voidcxz Hub] Send the whole output above - it shows where the client code lives.")
 	genv.SV_SAE_RUNNING = nil
 	return
 end
