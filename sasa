@@ -190,25 +190,133 @@ local function softRequire(inst)
 	return ok and mod or nil
 end
 
-local Lib = ReplicatedStorage:WaitForChild("Library", 30)
-local Client = Lib:WaitForChild("Client", 15)
-local Util = Lib:WaitForChild("Util", 15)
-local Globals = Lib:WaitForChild("Globals", 15)
+local function ChildNames(Parent)
+	local Names = {}
+	if Parent then
+		for _, Child in ipairs(Parent:GetChildren()) do
+			table.insert(Names, Child.Name)
+		end
+	end
+	return table.concat(Names, ", ")
+end
 
-local EggCmds = softRequire(Client:WaitForChild("EggCmds", 15))
-local PlotCmds = softRequire(Client:WaitForChild("PlotCmds", 15))
-local Network = softRequire(Client:WaitForChild("Network", 15))
-local Guard = softRequire(Client:WaitForChild("ToolGameplayGuard", 15))
-local Lookup = softRequire(Util:WaitForChild("GuardAreaLookupUtil", 15))
-local Save = softRequire(Client:WaitForChild("Save", 15))
-local BaseUpgrade = softRequire(Client:WaitForChild("BaseUpgradeClient", 15))
-local AssetCmds = softRequire(Client:WaitForChild("AssetCmds", 15))
-local Constants = softRequire(Globals:WaitForChild("Constants", 15))
-local SpeedPowerProjection = softRequire(Client:FindFirstChild("SpeedPowerProjection"))
-local TreadmillUtil = softRequire(Util:FindFirstChild("TreadmillUtil"))
+-- The client library has moved between game updates, so resolve it by looking
+-- for the EggCmds module rather than trusting one hard-coded path. WaitForChild
+-- returns nil on timeout, and indexing that nil is what killed the previous
+-- build before it could report anything.
+local LIBRARY_NAMES = { "Library", "Libraries", "Shared", "Modules" }
+
+local function FindLibraryDirect()
+	for _, Name in ipairs(LIBRARY_NAMES) do
+		local Container = ReplicatedStorage:FindFirstChild(Name)
+		local ClientFolder = Container and Container:FindFirstChild("Client")
+		if ClientFolder and ClientFolder:FindFirstChild("EggCmds") then
+			return Container, Name
+		end
+	end
+	return nil, nil
+end
+
+local function FindLibraryDeep()
+	for _, Desc in ipairs(ReplicatedStorage:GetDescendants()) do
+		if Desc.Name == "EggCmds" and Desc:IsA("ModuleScript") then
+			local Container = Desc.Parent and Desc.Parent.Parent
+			if Container then
+				return Container, Container:GetFullName()
+			end
+		end
+	end
+	return nil, nil
+end
+
+local function ResolveLibrary()
+	local Found, How = FindLibraryDirect()
+	if not Found then
+		Found, How = FindLibraryDeep()
+	end
+	if Found then
+		return Found, How
+	end
+
+	-- Content may still be replicating; poll before giving up.
+	local Deadline = os.clock() + 20
+	local LastDeep = os.clock()
+	while os.clock() < Deadline do
+		task.wait(0.5)
+		Found, How = FindLibraryDirect()
+		if Found then
+			return Found, How
+		end
+		if os.clock() - LastDeep >= 5 then
+			LastDeep = os.clock()
+			Found, How = FindLibraryDeep()
+			if Found then
+				return Found, How
+			end
+		end
+	end
+	return nil, nil
+end
+
+local function WaitModule(Parent, Name)
+	if not Parent then
+		return nil
+	end
+	return softRequire(Parent:WaitForChild(Name, 15))
+end
+
+local function FindModule(Parent, Name)
+	if not Parent then
+		return nil
+	end
+	return softRequire(Parent:FindFirstChild(Name))
+end
+
+if game.PlaceId ~= PLACE_ID then
+	warn("[Voidcxz Hub] PlaceId " .. tostring(game.PlaceId) .. " does not match Steal An Egg ("
+		.. tostring(PLACE_ID) .. ") - continuing anyway")
+end
+
+local Lib, LibPath = ResolveLibrary()
+if not Lib then
+	warn("[Voidcxz Hub] Could not find the game's client library - aborting.")
+	print("[Voidcxz Hub] PlaceId: " .. tostring(game.PlaceId) .. " (expected " .. tostring(PLACE_ID) .. ")")
+	print("[Voidcxz Hub] ReplicatedStorage children:")
+	for _, Child in ipairs(ReplicatedStorage:GetChildren()) do
+		print("    " .. Child.ClassName .. "  " .. Child.Name)
+	end
+	print("[Voidcxz Hub] Join Steal An Egg and re-run, or send the list above.")
+	genv.SV_SAE_RUNNING = nil
+	return
+end
+print("[Voidcxz Hub] library found at " .. tostring(LibPath))
+
+local Client = Lib:FindFirstChild("Client")
+local Util = Lib:FindFirstChild("Util")
+local Globals = Lib:FindFirstChild("Globals")
+
+local EggCmds = WaitModule(Client, "EggCmds")
+local PlotCmds = WaitModule(Client, "PlotCmds")
+local Network = WaitModule(Client, "Network")
+local Guard = WaitModule(Client, "ToolGameplayGuard")
+local Lookup = WaitModule(Util, "GuardAreaLookupUtil")
+local Save = WaitModule(Client, "Save")
+local BaseUpgrade = WaitModule(Client, "BaseUpgradeClient")
+local AssetCmds = WaitModule(Client, "AssetCmds")
+local Constants = WaitModule(Globals, "Constants")
+local SpeedPowerProjection = FindModule(Client, "SpeedPowerProjection")
+local TreadmillUtil = FindModule(Util, "TreadmillUtil")
 
 if not EggCmds or not PlotCmds or not Guard or not Lookup then
-	warn("[Voidcxz Hub] Steal An Egg modules unavailable")
+	warn("[Voidcxz Hub] Steal An Egg modules unavailable - aborting.")
+	print("[Voidcxz Hub] library: " .. tostring(LibPath))
+	print("[Voidcxz Hub] resolved: EggCmds=" .. tostring(EggCmds ~= nil)
+		.. " PlotCmds=" .. tostring(PlotCmds ~= nil)
+		.. " Network=" .. tostring(Network ~= nil)
+		.. " Guard=" .. tostring(Guard ~= nil)
+		.. " Lookup=" .. tostring(Lookup ~= nil))
+	print("[Voidcxz Hub] Client children: " .. ChildNames(Client))
+	print("[Voidcxz Hub] Util children: " .. ChildNames(Util))
 	genv.SV_SAE_RUNNING = nil
 	return
 end
